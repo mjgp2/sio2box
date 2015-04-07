@@ -1,5 +1,12 @@
 package sio2box.agent;
 
+import static sio2box.agent.MethodUtils.INIT;
+import static sio2box.agent.MethodUtils.SIZE_OF_CLASS;
+import static sio2box.agent.MethodUtils.T_REF;
+import static sio2box.agent.MethodUtils.UTIL;
+import static sio2box.agent.MethodUtils.constructor;
+import static sio2box.agent.MethodUtils.sizeOfType;
+
 import java.util.List;
 
 import lombok.AccessLevel;
@@ -13,7 +20,6 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.AdviceAdapter;
-import org.objectweb.asm.commons.Method;
 
 import sio2box.annotations.SiO2Method;
 import sio2box.api.MemoryStore;
@@ -27,24 +33,7 @@ import sio2box.api.Util;
 @FieldDefaults(level = AccessLevel.PRIVATE)
 public class SiO2MethodVisitor extends AdviceAdapter {
 
-    static final Method SIZE_OF_CLASS;
-
-    static final Type UTIL = Type.getType(Util.class);
-
-    static final String INIT = "<init>";
-
-    static final int T_REF = 12;
-
     static final String METHOD_ANNOTATION = Type.getDescriptor(SiO2Method.class);
-
-    @SneakyThrows
-    static Method getMethod(Class<?> clazz, String name, Class<?>... parameterTypes) {
-        return Method.getMethod(clazz.getMethod(name, parameterTypes));
-    }
-
-    static {
-        SIZE_OF_CLASS = getMethod(Util.class, "sizeOfClass", Class.class);
-    }
 
     @Getter
     boolean trackedMethod = false;
@@ -72,16 +61,6 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         this.methodName = methodName;
         this.desc = desc;
         this.ignoredMethod = methodIgnoredByTracking();
-    }
-
-    private boolean methodIgnoredByTracking() {
-        final String fqMethodName = className + "." + methodName;
-        for (String ignoreClass : methodsIgnoredByTracking) {
-            if (fqMethodName.startsWith(ignoreClass)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -144,10 +123,6 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         }
 
         super.visitMethodInsn(opcode, owner, name, signature, itf);
-    }
-
-    private boolean constructor(String name) {
-        return name.equals(INIT);
     }
 
     private void onArrayClone(String owner) {
@@ -501,28 +476,16 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         }
     }
 
-    private int sizeOfType(int operand) {
-        switch (operand) {
-            case T_BOOLEAN:
-                return 1; // T_BOOLEAN: 1 byte.
-            case T_CHAR:
-                return 2; // T_CHAR: 2 bytes.
-            case T_FLOAT:
-                return 4; // T_FLOAT: 4 bytes.
-            case T_DOUBLE:
-                return 8; // T_DOUBLE: 8 bytes.
-            case T_BYTE:
-                return 1; // T_BYTE: 1 byte.
-            case T_SHORT:
-                return 2; // T_SHORT: 2 bytes.
-            case T_INT:
-                return 4; // T_INT: 4 bytes.
-            case T_LONG:
-                return 8; // T_LONG: 8 bytes.
-            case T_REF:
-                return 4; // T_REF: 4 bytes.
-            default:
-                return 0;
+
+    
+
+    private boolean methodIgnoredByTracking() {
+        final String fqMethodName = className + "." + methodName;
+        for (String ignoreClass : methodsIgnoredByTracking) {
+            if (fqMethodName.startsWith(ignoreClass)) {
+                return true;
+            }
         }
+        return false;
     }
 }

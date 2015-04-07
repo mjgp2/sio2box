@@ -1,5 +1,6 @@
 package sio2box.agent;
 
+import static sio2box.agent.MethodUtils.*;
 import java.util.List;
 
 import lombok.AccessLevel;
@@ -57,37 +58,6 @@ public class SiO2ClassVisitor extends ClassVisitor implements Opcodes {
         return super.visitField(access, name, desc, signature, value);
     }
 
-    private boolean staticAccess(int access) {
-        return (access & ACC_STATIC) == ACC_STATIC;
-    }
-
-    private int signatureToBytes(String desc) {
-        if (desc == null) return 0;
-        switch (desc.charAt(0)) {
-            case 'Z':
-                return 1; // BOOLEAN
-            case 'C':
-                return 2; // CHAR
-            case 'F':
-                return 4; // FLOAT
-            case 'D':
-                return 8; // DOUBLE
-            case 'B':
-                return 1; // BYTE
-            case 'S':
-                return 2; // SHORT
-            case 'I':
-                return 4; // INT
-            case 'J':
-                return 8; // LONG
-            case 'L':
-                return 4; // OBJECT
-            case '[':
-                return 4; // ARRAY
-            default:
-                return 0; // Undefined, shouldn't happen.
-        }
-    }
 
     @Override
     public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
@@ -103,14 +73,6 @@ public class SiO2ClassVisitor extends ClassVisitor implements Opcodes {
         
         // wrap it 
         return new SiO2MethodVisitor(mv, desc, className, name, enabledClass, access, methodsIgnoredByTracking);
-    }
-
-    private boolean constructor(String name) {
-        return name.equals("<init>");
-    }
-
-    private boolean synthetic(int access) {
-        return (access & ACC_SYNTHETIC) == ACC_SYNTHETIC;
     }
 
     @Override
