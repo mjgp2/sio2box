@@ -65,6 +65,10 @@ public class MethodUtils {
     }
     
 
+	static boolean staticMethod(int access) {
+		return (ACC_STATIC & access) == ACC_STATIC;
+	}
+
     @SneakyThrows
     static Method getMethod(Class<?> clazz, String name, Class<?>... parameterTypes) {
         return Method.getMethod(clazz.getMethod(name, parameterTypes));

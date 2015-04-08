@@ -1,11 +1,6 @@
 package sio2box.agent;
 
-import static sio2box.agent.MethodUtils.INIT;
-import static sio2box.agent.MethodUtils.SIZE_OF_CLASS;
-import static sio2box.agent.MethodUtils.T_REF;
-import static sio2box.agent.MethodUtils.UTIL;
-import static sio2box.agent.MethodUtils.constructor;
-import static sio2box.agent.MethodUtils.sizeOfType;
+import static sio2box.agent.MethodUtils.*;
 
 import java.util.List;
 
@@ -33,6 +28,11 @@ import sio2box.api.Util;
 @FieldDefaults(level = AccessLevel.PRIVATE)
 public class SiO2MethodVisitor extends AdviceAdapter {
 
+    static final String CONTEXT_INTERNAL_NAME = Type.getInternalName(ThreadTrackingContext.class);
+    static final String MEMORYSTORE_INTERNAL_NAME = Type.getInternalName(MemoryStore.class);
+    static final String INITIALIZEMEMORYSTORE_SIGNATURE = "(L" + MEMORYSTORE_INTERNAL_NAME + ";)L" + MEMORYSTORE_INTERNAL_NAME + ";";
+    static final String UTIL_INTERNAL_NAME = Type.getInternalName(Util.class);
+    static final String MEMORYSTORE_DESCRIPTOR = Type.getDescriptor(MemoryStore.class);
     static final String METHOD_ANNOTATION = Type.getDescriptor(SiO2Method.class);
 
     @Getter
@@ -65,29 +65,53 @@ public class SiO2MethodVisitor extends AdviceAdapter {
 
     @Override
     public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
-        
+
         // need class *and* method annotation
         if (enabledClass && desc.equals(METHOD_ANNOTATION)) {
             trackedMethod = true;
         }
-        
+
         return super.visitAnnotation(desc, visible);
     }
 
-    
+    @Override
+    public void visitCode() {
+        super.visitCode();
+
+        if (ignoredMethod && trackedMethod) {
+            System.err.println("Method both ignored and annotated! " + className + "#" + methodName);
+            return;
+        }
+
+        if (ignoredMethod) {
+            startIgnoring();
+        }
+
+        if (trackedMethod) {
+            startTracker();
+        }
+
+        if (ignoredMethod || trackedMethod) {
+            // add a new label for our finally call at the end to ensure we always add the bytes
+            startFinally = new Label();
+            mv.visitLabel(startFinally);
+        }
+    }
+
+
     @Override
     @SneakyThrows
     public void visitMethodInsn(int opcode, String owner, String name, String signature, boolean itf) {
-        
+
         // track creating arrays by reflection as they don't produce the same opcodes
         if (opcode == INVOKESTATIC && owner.equals("java/lang/reflect/Array") && name.equals("newInstance")) {
-            
+
             if (signature.equals("(Ljava/lang/Class;I)Ljava/lang/Object;")) {
                 onSingleDimensionArrayNewInstance();
             } else if (signature.equals("(Ljava/lang/Class;[I)Ljava/lang/Object;")) {
                 onMultiDimensionArrayNewInstance();
             }
-            
+
             super.visitMethodInsn(opcode, owner, name, signature, itf);
             return;
         }
@@ -112,10 +136,10 @@ public class SiO2MethodVisitor extends AdviceAdapter {
                 return;
             }
 
-            if ( name.equals("clone") ) {
+            if (name.equals("clone")) {
                 super.visitMethodInsn(opcode, owner, name, signature, itf);
                 mv.visitInsn(DUP);
-                mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addCloneBytes", "(Ljava/lang/Object;)V", false);
+                mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addCloneBytes", "(Ljava/lang/Object;)V", false);
                 // -> stack:
                 return;
             }
@@ -155,9 +179,9 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         // -> ... newobj length
         mv.visitIntInsn(SIPUSH, sizeOfType(typeFromChar(owner.charAt(i))));
         // -> ... newobj length size
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForArray", "(II)I", false);
+        mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForArray", "(II)I", false);
         // -> ... newobj bytes
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addArrayBytes", "(I)V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addArrayBytes", "(I)V", false);
         // -> stack: newobj
     }
 
@@ -200,9 +224,9 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         // -> ... newobj lengthArrayRef
         mv.visitIntInsn(SIPUSH, sizeOfType(typeFromChar(owner.charAt(numDims))));
         // -> ... newobj lengthArrayRef size
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForMultiArray", "([II)I", false);
+        mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForMultiArray", "([II)I", false);
         // -> ... newobj bytes
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addMultiArrayBytes", "(I)V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addMultiArrayBytes", "(I)V", false);
         // -> stack: newobj
     }
 
@@ -214,11 +238,11 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         // ... dimsArray dimsArray class
         mv.visitInsn(DUP_X2);
         // ... class dimsArray dimsArray class
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, Type.getInternalName(Util.class), "sizeOfClass", "(Ljava/lang/Class;)I", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, UTIL_INTERNAL_NAME, "sizeOfClass", "(Ljava/lang/Class;)I", false);
         // -> class dimsArray dimsArray sizeof(T_REF)
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForMultiArray", "([II)I", false);
+        mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForMultiArray", "([II)I", false);
         // -> class dimsArray bytes
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addMultiArrayBytes", "(I)V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addMultiArrayBytes", "(I)V", false);
         // stack: class dimsArray
     }
 
@@ -232,15 +256,16 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         // ... class count count class
         invokeStatic(UTIL, SIZE_OF_CLASS);
 
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForArray", "(II)I", false);
+        mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForArray", "(II)I", false);
         // -> ... count bytes
 
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addArrayBytes", "(I)V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addArrayBytes", "(I)V", false);
         // stack: class count
     }
 
     private void addBytesFromFields() {
-        if (!methodName.equals(INIT)) {
+
+        if (!constructor(methodName)) {
             push(8);
             super.visitMethodInsn(INVOKESTATIC, "sio2box/api/ThreadTrackingContext", "addBytes", "(I)V", false);
             return;
@@ -250,55 +275,67 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         super.visitMethodInsn(INVOKESTATIC, "sio2box/api/ThreadTrackingContext", "addBytesFromFields", "(Ljava/lang/Object;)V", false);
     }
 
-    @Override
-    public void visitCode() {
-        super.visitCode();
-
-        if (ignoredMethod && trackedMethod) {
-            System.err.println("Method both ignored and annotated! " + className + "#" + methodName);
-            return;
-        }
-
-        if (ignoredMethod) {
-            startIgnoring();
-        }
-
-        if (trackedMethod) {
-            startTracker();
-        }
-
-        if (ignoredMethod || trackedMethod) {
-            startFinally = new Label();
-            mv.visitLabel(startFinally);
-        }
-    }
 
     private void startIgnoring() {
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "startIgnoring", "()V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "startIgnoring", "()V", false);
     }
 
     private void startTracker() {
         // Check if MemoryStore object is an argument, then push the memory onto the stack.
         Type[] typeArray = Type.getArgumentTypes(desc);
-        if (typeArray.length > 0 && typeArray[0].getDescriptor().equals(Type.getDescriptor(MemoryStore.class))) {
-            int location = ((ACC_STATIC & access) == ACC_STATIC) ? 0 : 1; // First location is taken
-                                                                          // by "this" if not
-                                                                          // static.
+        if (typeArray.length > 0 && typeArray[0].getDescriptor().equals(MEMORYSTORE_DESCRIPTOR)) {
+
+            int location = staticMethod(access) ? 0 : 1; // First location is taken by "this" if not
+                                                         // static.
+
             memoryStore = true;
+
+            // get the MemoryStore reference on the stack
             mv.visitVarInsn(ALOAD, location);
-            mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "initializeMemoryStore",
-                    "(L" + Type.getInternalName(MemoryStore.class) + ";)L" + Type.getInternalName(MemoryStore.class) + ";", false);
+
+            // pass the reference into initialize it (will create if null)
+            mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "initializeMemoryStore", INITIALIZEMEMORYSTORE_SIGNATURE, false);
+
+            // put into local var
             mv.visitVarInsn(ASTORE, location);
+
+            // copy back onto stack
             mv.visitVarInsn(ALOAD, location);
-            mv.visitMethodInsn(INVOKEVIRTUAL, Type.getInternalName(MemoryStore.class), "getUsedMemory", "()J", false);
+
+            // get used memory
+            mv.visitMethodInsn(INVOKEVIRTUAL, MEMORYSTORE_INTERNAL_NAME, "getUsedMemory", "()J", false);
+
+            // copy back onto stack again
             mv.visitVarInsn(ALOAD, location);
-            mv.visitMethodInsn(INVOKEVIRTUAL, Type.getInternalName(MemoryStore.class), "getMaxMemory", "()J", false);
+
+            // get max memory
+            mv.visitMethodInsn(INVOKEVIRTUAL, MEMORYSTORE_INTERNAL_NAME, "getMaxMemory", "()J", false);
         } else {
+            // used memory = 0
             mv.visitInsn(LCONST_0);
-            mv.visitLdcInsn(new Long(-1L));
+
+            // max memory = -1 (unlimited)
+            mv.visitLdcInsn(Long.valueOf(-1L));
         }
-        // inject code to start a tracker on a threadlocal for this method
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "startTracker", "(JJ)V", false);
+
+        // start tracker, passing in used and max memory
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "startTracker", "(JJ)V", false);
+    }
+
+    private void stopTracker() {
+        if (memoryStore) {
+
+            // get the memory store
+            int location = staticMethod(access) ? 0 : 1;
+            mv.visitVarInsn(ALOAD, location);
+
+            // get the bytes on the stack
+            mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "getBytes", "()J", false);
+
+            // add to memory
+            mv.visitMethodInsn(INVOKEVIRTUAL, MEMORYSTORE_INTERNAL_NAME, "addMemory", "(J)V", false);
+        }
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "stopTracker", "()V", false);
     }
 
     @Override
@@ -341,19 +378,10 @@ public class SiO2MethodVisitor extends AdviceAdapter {
     }
 
     private void stopIgnoring() {
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "stopIgnoring", "()V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "stopIgnoring", "()V", false);
     }
 
 
-    private void stopTracker() {
-        if (memoryStore) {
-            int location = ((ACC_STATIC & access) == ACC_STATIC) ? 0 : 1;
-            mv.visitVarInsn(ALOAD, location);
-            mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "getBytes", "()J", false);
-            mv.visitMethodInsn(INVOKEVIRTUAL, Type.getInternalName(MemoryStore.class), "addMemory", "(J)V", false);
-        }
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "stopTracker", "()V", false);
-    }
 
     @Override
     public void visitTypeInsn(int opcode, String type) {
@@ -363,15 +391,15 @@ public class SiO2MethodVisitor extends AdviceAdapter {
             // -> ... count count
             mv.visitIntInsn(SIPUSH, 4); // Object reference is 4 bytes.
             // -> ... count count num
-            mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForArray", "(II)I", false);
+            mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForArray", "(II)I", false);
             // -> ... count bytes
-            mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addArrayBytes", "(I)V", false);
+            mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addArrayBytes", "(I)V", false);
             // -> stack: count
         }
 
         super.visitTypeInsn(opcode, type);
     }
-    
+
     @Override
     public void visitIntInsn(int opcode, int operand) {
         if (opcode == NEWARRAY) {
@@ -381,9 +409,9 @@ public class SiO2MethodVisitor extends AdviceAdapter {
                 // -> ... count count
                 mv.visitIntInsn(SIPUSH, sizeOfType(operand));
                 // -> ... count count num
-                mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForArray", "(II)I", false);
+                mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForArray", "(II)I", false);
                 // -> ... count bytes
-                mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addArrayBytes", "(I)V", false);
+                mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addArrayBytes", "(I)V", false);
                 // -> stack: count
             }
         }
@@ -416,11 +444,11 @@ public class SiO2MethodVisitor extends AdviceAdapter {
         // -> arrayRef arrayRef
         mv.visitIntInsn(SIPUSH, sizeOfType(typeOfMultiArray(desc)));
         // -> arrayRef arrayRef sizeof(T_REF)
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(Util.class), "calculateBytesForMultiArray", "([II)I", false);
+        mv.visitMethodInsn(INVOKESTATIC, UTIL_INTERNAL_NAME, "calculateBytesForMultiArray", "([II)I", false);
         // -> arrayRef bytes
         // //log.debug("adding {}*count bytes for MULTI-NEWARRAY allocation",
         // sizeOfType(typeOfMultiArray(desc)));
-        mv.visitMethodInsn(INVOKESTATIC, Type.getInternalName(ThreadTrackingContext.class), "addMultiArrayBytes", "(I)V", false);
+        mv.visitMethodInsn(INVOKESTATIC, CONTEXT_INTERNAL_NAME, "addMultiArrayBytes", "(I)V", false);
         // -> arrayRef
         for (int i = 0; i < numDims; i++) {
             mv.visitInsn(DUP);
@@ -477,7 +505,6 @@ public class SiO2MethodVisitor extends AdviceAdapter {
     }
 
 
-    
 
     private boolean methodIgnoredByTracking() {
         final String fqMethodName = className + "." + methodName;
